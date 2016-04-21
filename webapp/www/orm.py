@@ -88,7 +88,7 @@ class Field(object):
         self.default = default
     #一次输出 类名，属性类型，主键，属性名
     def __str__(self):
-        return '<%s,%s:%s>' % (self.__class__.__name__, self.column_type, self.primary_key, self.name)
+        return '<%s,%s:%s>' % (self.__class__.__name__, self.column_type,self.name)
 
 #字符串域
 class StringField(Field):
@@ -141,7 +141,9 @@ class ModelMetaclass(type):
         fields = []#用来存储非主键的属性
         primaryKey = None#用来保存主键
         for k, v in attrs.items():
+            print(k)
             if isinstance(v, Field):
+                print(k,v)
                 #找到映射关系
                 logging.info('found mapping:%s==>%s' % (k, v))
                 mappings[k] = v
@@ -150,6 +152,7 @@ class ModelMetaclass(type):
                     if primaryKey:#假如主键已经存在，又找到一个主键，则报错
                         raise RuntimeError('Duplicate primary key for field:%s' % k)
                     primaryKey = k
+                    print(k)
                 else:
                     #将非主键添加到fields中
                     fields.append(k)
@@ -159,17 +162,6 @@ class ModelMetaclass(type):
                 #删除重复的键值
                 for k in mappings.keys():
                     attrs.pop(k)
-
-                escaped_fields = list(Map(lambda f: '%s' % f, fields))
-                attrs['__mappings__'] = mappings
-                attrs['__table__'] = tableName
-                attrs['__primary_key__'] = primaryKey
-                attrs['__fields__'] = fields
-                attrs['__select__'] = 'select ' % s', %s from ' % s'' % (primaryKey, ','.join(escaped_fields), tableName)
-                attrs['__insert__'] = 'insert into ' % s' (%s,%s) values(%s)' % (tableName, ','.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields)+1))
-                attrs['__update__'] = 'update ' % s' set %s where ' % s'=?' % (tableName, ','.join(map(lambda f: '' % s'=?' % (mapping.get(f).name or f), fields)), primaryKey)
-                attrs['__delete__'] = 'delete from ' % s' where ' % s'=?' % (tableName, primaryKey)
-
                 #将非主键存放在escaped中：list类型，方便增删改查
                 escaped_fields = list(map(lambda f: '' % f, fields))
                 attrs['__mappings__'] = mappings#保存属性和列的映射关系
@@ -269,8 +261,9 @@ class Model(dict, metaclass=ModelMetaclass):
         return rs[0]['_num_']
 
     async def save(self):
-        args = list(map(self.getValueOrDefault, self.__fields__))
-        args.append(self.getValueOrDefault(self.__primary_key__))
+        args = list(map(self.getValue, self.__fields__))
+        print(args[1])
+        args.append(self.getValue(self.__primary_key__))
         #调用插入语句
         rows = await execute(self.__insert__, args)
         #插入一条记录，结果影响的条数不为1，则报错
@@ -278,8 +271,8 @@ class Model(dict, metaclass=ModelMetaclass):
             logging.warn('failed to insert record:affected rows: %s' % rows)
 
     async def update(self):
-        args = list(map(self.getValue, self.__fields__))
-        args.append(self.getValue(self.__primary_key__))
+        args = list(map(self.getValueOrDefault, self.__fields__))
+        args.append(self.getValueOrDefault(self.__primary_key__))
         rows = await execute(self.__update__, args)
         if rows != 1:
             logging.warn(' failed to update by primary key:affected rows: %s' % rows)

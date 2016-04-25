@@ -19,15 +19,15 @@ def create_pool(loop, **kw):
     global __pool
     __pool = yield from aiomysql.create_pool(
         host=kw.get('host', 'localhost'),
-        port=kw.get('port', '3306'),
+        port=kw.get('port', 3306),
         user=kw['user'],
         password=kw['password'],
         db=kw['db'],
-        charset=kw('charset', 'utf8'),
+        charset=kw.get('charset', 'utf8'),
         autocommit=kw.get('autocommit', True),
-        maxsize=kw.get('maxsize', '10'),
-        minsize=kw.get('minsize', '1'),
-        loop=loop #设置消息循环 why？
+        maxsize=kw.get('maxsize', 10),
+        minsize=kw.get('minsize', 1),
+        loop=loop
     )
 
 # select sql
@@ -60,7 +60,7 @@ def execute(sql, args):
     with (yield from __pool) as conn:
         try:
             cur = yield from conn.cursor()
-            yield from cur.execute(sql.replace('?', '%s'), args)
+            yield from cur.execute(sql.replace('?', '%s'), args or ())
             #返回影响的行数
             affected = cur.rowcount
             yield from cur.close()
@@ -141,9 +141,7 @@ class ModelMetaclass(type):
         fields = []#用来存储非主键的属性
         primaryKey = None#用来保存主键
         for k, v in attrs.items():
-            print(k)
             if isinstance(v, Field):
-                print(k,v)
                 #找到映射关系
                 logging.info('found mapping:%s==>%s' % (k, v))
                 mappings[k] = v
@@ -152,29 +150,27 @@ class ModelMetaclass(type):
                     if primaryKey:#假如主键已经存在，又找到一个主键，则报错
                         raise RuntimeError('Duplicate primary key for field:%s' % k)
                     primaryKey = k
-                    print(k)
                 else:
                     #将非主键添加到fields中
                     fields.append(k)
-                #一张表没有主键也报错
-                if not primaryKey:
-                    raise RuntimeError('Primary key not found.')
+        #一张表没有主键也报错
+        if not primaryKey:
+            raise RuntimeError('Primary key not found.')
                 #删除重复的键值
-                for k in mappings.keys():
-                    attrs.pop(k)
+        for k in mappings.keys():
+            attrs.pop(k)
                 #将非主键存放在escaped中：list类型，方便增删改查
-                escaped_fields = list(map(lambda f: '' % f, fields))
-                attrs['__mappings__'] = mappings#保存属性和列的映射关系
-                attrs['__table__'] = tableName#保存表名
-                attrs['__primary_key__'] = primaryKey#保存主键
-                attrs['__fields__'] = fields#保存非主键
-                attrs['__select__'] = 'select `%s`, %s from `%s`' %  (primaryKey, ','.join(escaped_fields), tableName)
-                #利用create_args_string生成若干个占位符。（不懂）
-                attrs['__insert__'] = 'insert into  `%s` (%s,`%s`) values(%s)' % (tableName, ','.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields)+1))
-                attrs['__update__'] = 'update `%s` set %s where  `%s`=?' % (tableName, ','.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
-                attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
-
-                return type.__new__(cls, name, bases, attrs)
+        escaped_fields = list(map(lambda f: '`%s`' % f, fields))
+        attrs['__mappings__'] = mappings#保存属性和列的映射关系
+        attrs['__table__'] = tableName#保存表名
+        attrs['__primary_key__'] = primaryKey#保存主键
+        attrs['__fields__'] = fields#保存非主键
+        attrs['__select__'] = 'select `%s`, %s from `%s`' %  (primaryKey, ','.join(escaped_fields), tableName)
+        #利用create_args_string生成若干个占位符。（不懂）
+        attrs['__insert__'] = 'insert into  `%s` (%s,`%s`) values(%s)' % (tableName, ','.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields)+1))
+        attrs['__update__'] = 'update `%s` set %s where  `%s`=?' % (tableName, ','.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
+        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
+        return type.__new__(cls, name, bases, attrs)
 
 #定义所有orm的基类Model
 #Model继承dict,所具有dict的所有功能，又实现了特殊的get和set方法。
@@ -216,9 +212,9 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return cls(**rs[0])
-
     @classmethod
-    async def findAll(cls, where=None, args=None, **kw):
+    @asyncio.coroutine
+    def findAll(cls, where=None, args=None, **kw):
         ' find objects by where clause.'
         #我们定义的默认select是通过主键查询的，并不包括where，orderBy,limit等关键字
         #假如存在关键字,就在select语句中增加关键字
@@ -245,7 +241,8 @@ class Model(dict, metaclass=ModelMetaclass):
                 args.extend(limit)
             else:
                 raise ValueError('Invalid limit value: %s' % str(limit))
-        rs = await select(' '.join(sql), args)
+        rs = yield from select(' '.join(sql), args)
+        print('我',rs)
         return [cls(**r) for r in rs]
 
     @classmethod
@@ -259,13 +256,14 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return rs[0]['_num_']
-
-    async def save(self):
-        args = list(map(self.getValue, self.__fields__))
+    @asyncio.coroutine
+    def save(self):
+        print('执行save')
+        args = list(map(self.getValueOrDefault, self.__fields__))
         print(args[1])
-        args.append(self.getValue(self.__primary_key__))
+        args.append(self.getValueOrDefault(self.__primary_key__))
         #调用插入语句
-        rows = await execute(self.__insert__, args)
+        rows =yield from execute(self.__insert__, args)
         #插入一条记录，结果影响的条数不为1，则报错
         if rows != 1:
             logging.warn('failed to insert record:affected rows: %s' % rows)

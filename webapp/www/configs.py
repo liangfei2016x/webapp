@@ -1,13 +1,13 @@
 #configs.py
-import config_default
+import webapp.www.config_default
 class Dict(dict):
-	def __init__(self, name=(),values=(),**kw):
+	def __init__(self, names=(),values=(),**kw):
 		super(Dict,self).__init__(**kw)
 		for k,v in zip(names,values):
 			self[k] = v
 	def __getattr__(self,key):
 		try:
-			retrun self[key]
+			return self[key]
 		except KeyError:
 			raise AttributeError(r"'dict' object has no attribute '%s'" % key)
 	def __setattr__(self,key,value):
@@ -29,7 +29,7 @@ def toDict(d):
 		D[k] = toDict(v) if isinstance(v,dict) else v
 		return D
 
-configs = config_default.configs
+configs = webapp.www.config_default
 
 try:
 	import config_override
@@ -37,4 +37,4 @@ try:
 except ImportError:
 	pass
 
-configs = to Dict(congfigs)
+configs = toDict(configs)

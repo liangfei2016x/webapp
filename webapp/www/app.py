@@ -2,6 +2,7 @@ import logging; logging.basicConfig(level=logging.INFO)
 import sys
 import asyncio, os, json, time
 from datetime import datetime
+from webapp.www.handlers import cookie2user, COOKIE_NAME
 
 from aiohttp import web #aiohttp.web 会自动创建 Request 实例
 #Environment是Jinja2中的一个核心类，它的实例用来保存配置、全局对象，以及从本地文件系统或其它位置加载模板。
@@ -49,6 +50,30 @@ def logger_factory(app, handler):
         # await asyncio.sleep(0.3)
         return (yield from handler(request))
     return logger
+
+@asyncio.coroutine      #@asyncio.coroutine装饰，变成一个协程:
+def auth_factory(app, handler):
+    @asyncio.coroutine
+    def auth(request):
+        #不需要手动创建 Request实例 - aiohttp.web 会自动创建。
+        #打印(请求方法，请求路径)日志：
+        logging.info('check user: %s %s' % (request.method, request.path))
+        request.__user__ = None
+        cookie_str = request.cookies.get(COOKIE_NAME)
+        if cookie_str:
+            #根据COOKIE名解析对应cookie；
+            user = yield from cookie2user(cookie_str)
+            #解析cookie信息不为空则赋值到request.__user__：
+            if user:
+                #打印(设置当前用户信息)日志：
+                logging.info('set current user: %s' % user.email)
+                request.__user__ = user
+        #请求路径以‘/manage/’开头，且cookie用户信息不为空或cookie用户权限是否为管理员权限：
+        if request.path.startswith('/manage/') and request.__user__ is None:
+            return web.HTTPFound('/signin')
+
+        return (yield from handler(request))
+    return auth
 
 #middlewares请求服务器响应-数据处理器
 @asyncio.coroutine
@@ -106,7 +131,7 @@ def response_factory(app, handler):
                 return resp
             else:
                 #取出cookie用户信息绑定到request对象：
-               # r['__user__'] = request.__user__
+                r['__user__'] = request.__user__
                 #jinja2.Template.render():返回模板unicode字符串
                 resp = web.Response(body=app['__templating__'].get_template(template).render(**r).encode('utf-8'))
                 resp.content_type = 'text/html;charset=utf-8'
@@ -140,18 +165,26 @@ def datetime_filter(t):
     return u'%s年%s月%s日' % (dt.year, dt.month, dt.day)
 @asyncio.coroutine
 def init(loop):
+    #调用orm的create_pool()方法 链接数据库
     yield from webapp.www.orm.create_pool(loop=loop, host='127.0.0.1', port=3306, user='root', password='123456', db='awesome')
     print("链接数据库")
+    #创建 middlewares 请求响应处理器(字典型)对象，可以通过请求处理返回对应数据
     app = web.Application(loop=loop, middlewares=[
-        logger_factory, response_factory
+        logger_factory,auth_factory,response_factory
     ])
+    #初始化jinja2模块，添加filter(过滤器)
     init_jinja2(app, filters=dict(datetime=datetime_filter))
     add_routes(app, 'handlers')
     add_static(app)
+    #loop.create_server 利用asyncio创建TCP服务，
+    #make_handler()创建HTTP协议处理请求。
     srv = yield from loop.create_server(app.make_handler(), '127.0.0.1', 9000)
     logging.info('server started at http://127.0.0.1:9000...')
     return srv
 
+#获取EventLoop:
 loop = asyncio.get_event_loop()
+#执行coroutine协程
 loop.run_until_complete(init(loop))
+#持续运行直到停止命令
 loop.run_forever()

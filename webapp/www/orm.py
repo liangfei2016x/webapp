@@ -8,9 +8,8 @@ def log(sql, args=()):
     logging.info('SQL: %s' % sql)
 
 # 异步IO：协程
-
-
 @asyncio.coroutine
+#创建数据库链接池
 # Python允许你在list或tuple前面加一个*号，把list或tuple的元素变成可变参数传进去
 #**kw是关键字参数，kw接收的是一个dict(key=values).
 def create_pool(loop, **kw):
@@ -24,10 +23,10 @@ def create_pool(loop, **kw):
         password=kw['password'],
         db=kw['db'],
         charset=kw.get('charset', 'utf8'),
-        autocommit=kw.get('autocommit', True),
+        autocommit=kw.get('autocommit', True),#自动提交模式
         maxsize=kw.get('maxsize', 10),
         minsize=kw.get('minsize', 1),
-        loop=loop
+        loop=loop#可选循环实例  aiomysql默认为asyncio.get_event_loop()
     )
 
 # select sql
@@ -174,7 +173,7 @@ class ModelMetaclass(type):
 
 #定义所有orm的基类Model
 #Model继承dict,所具有dict的所有功能，又实现了特殊的get和set方法。
-#因此又可以像引用普通字段一样：a['arg']或a.args
+#因此又可以像引用普通字段一样：a['args']或a.args
 class Model(dict, metaclass=ModelMetaclass):
     #初始化参数，调用父类（dict）的方法
     def __init__(self, **kw):
@@ -188,7 +187,7 @@ class Model(dict, metaclass=ModelMetaclass):
     #设置属性方便 a.args
     def __setattr__(self, key, value):
         self[key] = value
-    #通过key取值，若不存在则返回None
+    #通过key取Value值，若不存在则返回None
     def getValue(self, key):
         return getattr(self, key, None)
     #通过key取值，若不存在则返回默认值
@@ -206,15 +205,17 @@ class Model(dict, metaclass=ModelMetaclass):
                 setattr(self, key, value)
         return value
     @classmethod
-    async def  find(cls,pk):
+    @asyncio.coroutine
+    def  find(cls,pk):
         'find object by primary key'
-        rs=await select('%s where `%s`=?' % (cls.__select__,cls.primary_key,[pk],1))
+        rs=yield from select('%s where `%s`=?' % (cls.__select__,cls.__primary_key__),[pk],1)
         if len(rs) == 0:
             return None
         return cls(**rs[0])
     @classmethod
     @asyncio.coroutine
     def findAll(cls, where=None, args=None, **kw):
+        print('findAll')
         ' find objects by where clause.'
         #我们定义的默认select是通过主键查询的，并不包括where，orderBy,limit等关键字
         #假如存在关键字,就在select语句中增加关键字
@@ -242,17 +243,17 @@ class Model(dict, metaclass=ModelMetaclass):
             else:
                 raise ValueError('Invalid limit value: %s' % str(limit))
         rs = yield from select(' '.join(sql), args)
-        print('我',rs)
         return [cls(**r) for r in rs]
 
     @classmethod
-    async def findNumber(cls, selectField, where=None, args=None):
+    @asyncio.coroutine
+    def findNumber(cls, selectField, where=None, args=None):
         'find number by select and where'
-        sql = ['selec %s _num_from `% s`' % (selectField, cls.__table__)]
+        sql = ['select %s _num_ from `%s`' % (selectField, cls.__table__)]
         if where:
             sql.append('where')
             sql.append(where)
-        rs = await select(' '.join(sql), args, 1)
+        rs = yield from select(' '.join(sql), args, 1)
         if len(rs) == 0:
             return None
         return rs[0]['_num_']
@@ -267,16 +268,16 @@ class Model(dict, metaclass=ModelMetaclass):
         #插入一条记录，结果影响的条数不为1，则报错
         if rows != 1:
             logging.warn('failed to insert record:affected rows: %s' % rows)
-
-    async def update(self):
-        args = list(map(self.getValueOrDefault, self.__fields__))
-        args.append(self.getValueOrDefault(self.__primary_key__))
-        rows = await execute(self.__update__, args)
+    @asyncio.coroutine
+    def update(self):
+        args = list(map(self.getValue, self.__fields__))
+        args.append(self.getValue(self.__primary_key__))
+        rows = yield from execute(self.__update__, args)
         if rows != 1:
             logging.warn(' failed to update by primary key:affected rows: %s' % rows)
-
-    async def remove(self):
+    @asyncio.coroutine
+    def remove(self):
         args = [self.getValue(self.__primary_key__)]#取得主键作为参数
-        rows = await execute(self.__delete__, args)#调用默认的delete语句
+        rows = yield from execute(self.__delete__, args)#调用默认的delete语句
         if rows != 1:
             logging.warn('failed to remove by primary key:affected rows:%s' % rows)

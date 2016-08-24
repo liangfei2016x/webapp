@@ -4,7 +4,7 @@
 编辑器：PyCharm 或 sublime Text
 
 
-运用技术：Python 3.5 + mysql（数据库）+uikit框架（web前端、CSS框架）.
+运用技术：Python 3.5 + mysql（数据库）+uikit框架（web框架、主要用了CSS样式）+Vue.js(数据驱动的组件).
 
 项目描述：
 
